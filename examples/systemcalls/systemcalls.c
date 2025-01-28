@@ -1,5 +1,8 @@
 #include "systemcalls.h"
-
+#include <stdlib.h>	// system
+#include <unistd.h>	// fork
+#include <sys/wait.h>	// waitpid
+#include <fcntl.h> 	// open
 /**
  * @param cmd the command to execute with system()
  * @return true if the command in @param cmd was executed
@@ -9,15 +12,9 @@
 */
 bool do_system(const char *cmd)
 {
-
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success
- *   or false() if it returned a failure
-*/
-
-    return true;
+    // Call system() with command set in cmd. Return true on success
+    int rc = system(cmd);
+    return rc == 0 ;
 }
 
 /**
@@ -45,23 +42,26 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *
-*/
+    // Fork-execv-wait format leveraged from LSP page 161
+    int status;
+    pid_t pid = fork();
+    if (pid == -1)
+    	return false; // fork failed
+    else if (pid == 0) {
+        execv(command[0], command);
+        exit(-1); // exit if execv fails
+    
+    }
 
     va_end(args);
 
-    return true;
+    if (waitpid(pid, &status, 0) == -1)
+    	return false; // waitpid failed
+    else if (WIFEXITED(status))
+    	return WEXITSTATUS(status) == 0; // return true on success
+
+    return false;
 }
 
 /**
@@ -80,9 +80,6 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
 
 /*
@@ -93,7 +90,58 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *
 */
 
+    // Redirect standard out to file. Leveraged from https://stackoverflow.com/a/13784315/1446624
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+    if (fd < 0)
+    	return false; // open failed
+    
+    // Fork-execv-wait format leveraged from LSP page 161
+    int status;
+    pid_t pid = fork();
+    switch (pid) {
+        case -1: 
+            return false; // fork failed
+            
+        case 0: // child
+            if (dup2(fd, STDOUT_FILENO) < 0) { // duplicate fd
+                close(fd);
+                exit(-1); // redirection of standard out failed
+            }
+            close(fd);
+            execv(command[0], command);
+            exit(-1); // execv failed
+            
+        default: // parent
+            close(fd);
+    }
+
     va_end(args);
 
-    return true;
+    if (waitpid(pid, &status, 0) == -1)
+    	return false; // waitpid failed
+    else if (WIFEXITED(status))
+    	return WEXITSTATUS(status) == 0; // return true on success
+
+    return false;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
