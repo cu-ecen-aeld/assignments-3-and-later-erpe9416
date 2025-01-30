@@ -111,6 +111,11 @@ sudo mknod -m 600 ${OUTDIR}/rootfs/dev/console c 5 1
 make clean
 make CROSS_COMPILE=${CROSS_COMPILE}
 
+echo "Validating compilation of writer utility"
+ls -l
+pwd
+find . -name "writer"
+
 # Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
 cd $FINDERDIR
