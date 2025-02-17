@@ -20,15 +20,12 @@
 #define INITIAL_BUFFER_SIZE 512
 
 // Global variables to be closed in singal handler
-int g_my_socket;
-int g_my_file_write;
+int g_my_socket = -1;
+int g_my_file_write = -1;
 
 
-// Signal handlerer for sigint, sigterm
-void signal_handler(int signo) {
-    syslog(LOG_INFO, "Caught signal, exiting");
-    printf("Caught signal, exiting\n");
-
+// Helper function to close open resources before exiting
+void cleanup() {
     if (g_my_socket != -1) {
         shutdown(g_my_socket, SHUT_RDWR); 
         close(g_my_socket);
@@ -37,9 +34,16 @@ void signal_handler(int signo) {
     if (g_my_file_write != -1) {
         close(g_my_file_write);
     }
-
     remove(DATA_FILE_PATH);
     closelog();
+}
+
+
+// Signal handlerer for sigint, sigterm
+void signal_handler(int signo) {
+    syslog(LOG_INFO, "Caught signal, exiting");
+    printf("Caught signal, exiting\n");
+    cleanup();
     exit(0);
 }
 
@@ -48,6 +52,7 @@ void signal_handler(int signo) {
 void handle_connection(int my_client, int g_my_file_write) {
     char *packet_buffer = NULL, *bigger_packet_buffer = NULL;
     size_t packet_length = 0;
+    int my_file_read = -1;
 
     while (1) {
         if (packet_buffer == NULL) {
@@ -72,7 +77,7 @@ void handle_connection(int my_client, int g_my_file_write) {
                 break;
             }
 
-            int my_file_read = open(DATA_FILE_PATH, O_RDONLY);
+            my_file_read = open(DATA_FILE_PATH, O_RDONLY);
             if (my_file_read < 0) {
                 perror("Call to open() failed for reading");
                 break;
@@ -107,9 +112,15 @@ void handle_connection(int my_client, int g_my_file_write) {
         }
     }
 
-    free(packet_buffer);
+    if (packet_buffer) {
+        free(packet_buffer);
+    }
+    if (my_file_read != -1) {
+        close(my_file_read);
+    }
     close(my_client);
 }
+
 
 int main(int argc, char *argv[]) {
 
@@ -130,18 +141,21 @@ int main(int argc, char *argv[]) {
     g_my_file_write = open(DATA_FILE_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666);
     if (g_my_file_write < 0) {
         perror("Call to open() failed for writing");
+        cleanup();
         return -1;
     }
 
     g_my_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (g_my_socket == -1) {
         perror("Call to socket() failed");
+        cleanup();
         return -1;
     }
 
     rc = setsockopt(g_my_socket, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
     if (rc == -1) {
         perror("Call to setsockopt() failed");
+        cleanup();
         return -1;
     }
 
@@ -152,12 +166,14 @@ int main(int argc, char *argv[]) {
     rc = bind(g_my_socket, (struct sockaddr *)&my_server_addr, sizeof(my_server_addr));
     if (rc == -1) {
         perror("Call to bind() failed");
+        cleanup();
         return -1;
     }
 
     rc = listen(g_my_socket, SOMAXCONN);
     if (rc == -1) {
         perror("Call to listen() failed");
+        cleanup();
         return -1;
     }
     
@@ -167,6 +183,7 @@ int main(int argc, char *argv[]) {
         pid_t pid = fork();
         if (pid < 0) {
             perror("Call to fork() failed");
+            cleanup();
             return -1;        
         }
         if (pid > 0) {
@@ -178,6 +195,7 @@ int main(int argc, char *argv[]) {
     printf("Listening on port 9000...\n");
     openlog("aesdsocket", LOG_PID, LOG_USER);
 
+    // Infinite loop to repeatedly accept and handle clients
     while (1) {
         socklen_t client_addr_len = sizeof(my_client_addr);
         my_client = accept(g_my_socket, (struct sockaddr *)&my_client_addr, &client_addr_len);
@@ -195,30 +213,7 @@ int main(int argc, char *argv[]) {
         printf("Closed connection from %s\n", inet_ntoa(my_client_addr.sin_addr));
     }
 
-    close(g_my_file_write);
-    close(g_my_socket);
-    closelog();
+    cleanup();
     return 0;
 }
-
-
-
-
-// Consider using shutdown() in your signal handler strategy
-
-
-
-// Use Valgrind to check for memory leaks
-// valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose --log-file=/tmp/valgrind-out.txt ./aesdsocket
-
-
-
-
-
-
-
-
-
-
-
 
