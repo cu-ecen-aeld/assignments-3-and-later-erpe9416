@@ -189,6 +189,30 @@ int main(int argc, char *argv[]) {
         if (pid > 0) {
             exit(0);
         }
+        if (setsid() < 0) {
+            perror("Call to setsid() failed");
+            cleanup();
+            return -1;    
+        }
+        if (chdir("/") < 0) {
+            perror("Call to chdir() failed");
+            cleanup();
+            return -1;
+        }
+        // Redirect output to /dev/null
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull < 0) {
+            perror("Call to open() failed for /dev/null");
+            cleanup();
+            return -1;
+        }
+        close(STDIN_FILENO);
+        close(STDOUT_FILENO);
+        close(STDERR_FILENO);
+        dup2(devnull, STDIN_FILENO);
+        dup2(devnull, STDOUT_FILENO);
+        dup2(devnull, STDERR_FILENO);
+        close(devnull);
     }
     
 
