@@ -22,15 +22,11 @@
 // Global variables to be closed in singal handler
 int g_my_socket = -1;
 int g_my_file_write = -1;
+int g_exit_flag = 0;
 
 
 // Helper function to close open resources before exiting
 void cleanup() {
-    if (g_my_socket != -1) {
-        shutdown(g_my_socket, SHUT_RDWR); 
-        close(g_my_socket);
-    }
-
     if (g_my_file_write != -1) {
         close(g_my_file_write);
     }
@@ -41,10 +37,11 @@ void cleanup() {
 
 // Signal handlerer for sigint, sigterm
 void signal_handler(int signo) {
-    syslog(LOG_INFO, "Caught signal, exiting");
-    printf("Caught signal, exiting\n");
-    cleanup();
-    exit(0);
+    if (g_my_socket != -1) {
+        shutdown(g_my_socket, SHUT_RDWR); 
+        close(g_my_socket);
+    }
+    g_exit_flag = 1;
 }
 
 
@@ -54,7 +51,7 @@ void handle_connection(int my_client, int g_my_file_write) {
     size_t packet_length = 0;
     int my_file_read = -1;
 
-    while (1) {
+    while (!g_exit_flag) {
         if (packet_buffer == NULL) {
             packet_buffer = malloc(INITIAL_BUFFER_SIZE);
             if (!packet_buffer) {
@@ -220,10 +217,13 @@ int main(int argc, char *argv[]) {
     openlog("aesdsocket", LOG_PID, LOG_USER);
 
     // Infinite loop to repeatedly accept and handle clients
-    while (1) {
+    while (!g_exit_flag) {
         socklen_t client_addr_len = sizeof(my_client_addr);
         my_client = accept(g_my_socket, (struct sockaddr *)&my_client_addr, &client_addr_len);
         if (my_client == -1) {
+            if (g_exit_flag) {
+                break;
+            }
             perror("Call to accept() failed");
             break;
         }
@@ -237,7 +237,10 @@ int main(int argc, char *argv[]) {
         printf("Closed connection from %s\n", inet_ntoa(my_client_addr.sin_addr));
     }
 
+    syslog(LOG_INFO, "Caught signal, exiting");
+    printf("Caught signal, exiting\n");
     cleanup();
+    
     return 0;
 }
 
