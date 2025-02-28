@@ -16,14 +16,16 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <pthread.h>
-#include <sys/queue.h>
+#include "queue.h"    // local version with FOREACH_SAFE
 #include <stdlib.h>
+#include <time.h>
+#include <signal.h>
 
 
 #define DATA_FILE_PATH "/var/tmp/aesdsocketdata"
 #define INITIAL_BUFFER_SIZE 512
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
     #define DEBUG_PRINT(...) printf(__VA_ARGS__)
 #else
@@ -36,12 +38,15 @@ int g_my_socket = -1;
 int g_my_file_write = -1;
 volatile int g_exit_flag = 0;
 pthread_mutex_t g_write_mutex = PTHREAD_MUTEX_INITIALIZER;
+timer_t g_timer;
 
 // Structure for an entry within the singly linked thread list
 struct thread_entry {
     pthread_t thread_id;
     int my_client;
+    bool is_done;
     SLIST_ENTRY(thread_entry) next_slist_entry; 
+    
 };
 
 SLIST_HEAD(thread_head, thread_entry);
@@ -53,6 +58,7 @@ void cleanup() {
         close(g_my_file_write);
     }
     remove(DATA_FILE_PATH);
+    timer_delete(g_timer);
     pthread_mutex_destroy(&g_write_mutex);
     closelog();
 }
@@ -82,7 +88,7 @@ void handle_connection(int my_client, int g_my_file_write) {
             }
         }
 
-        DEBUG_PRINT("my client: %d\n",my_client);
+        DEBUG_PRINT("Starting with client %d\n",my_client);
 
         ssize_t bytes_received = recv(my_client, packet_buffer + packet_length, INITIAL_BUFFER_SIZE, 0);
         if (bytes_received <= 0) {
@@ -139,6 +145,8 @@ void handle_connection(int my_client, int g_my_file_write) {
             packet_buffer = bigger_packet_buffer;
         }
     }
+    
+    DEBUG_PRINT("Completed with client %d\n",my_client);
 
     if (packet_buffer) {
         free(packet_buffer);
@@ -153,9 +161,71 @@ void handle_connection(int my_client, int g_my_file_write) {
 void *thread_connection_wrapper(void *arg) {
     struct thread_entry *my_entry = (struct thread_entry *)arg;
     handle_connection(my_entry->my_client, g_my_file_write);
+    my_entry->is_done = true;
     close(my_entry->my_client);
-    free(my_entry);
-    pthread_exit(NULL);
+    return NULL;
+}
+
+
+void insert_timestamp(int signum) {
+    char timestamp_buffer[128];
+    time_t now = time(NULL);
+    struct tm *tm_now = localtime(&now);
+
+    // RFC 2822 compliant strftime format (https://man7.org/linux/man-pages/man3/strftime.3.html)
+    strftime(timestamp_buffer, sizeof(timestamp_buffer), "timestamp: %a %d %b %Y %H:%M:%S\n", tm_now);
+
+    // Acquire the lock to write the timestamp
+    pthread_mutex_lock(&g_write_mutex);
+
+    int fd =  open(DATA_FILE_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666);
+    if (fd == -1) {
+        perror("Call to open() failed for timestamp");
+    } 
+    else {
+        if (write(fd, timestamp_buffer, strlen(timestamp_buffer)) == -1) {
+            perror("Call to write() failed for timestamp");
+        }
+        close(fd);
+    }
+
+    pthread_mutex_unlock(&g_write_mutex);
+}
+
+
+void timer_init(void)
+{
+    // Set the signal handler
+    struct sigaction my_sigaction = {
+        .sa_handler = insert_timestamp,
+        .sa_flags = SA_RESTART // Otherwise will cause accept() will fail and program to exit
+    };
+    if (sigaction(SIGALRM, &my_sigaction, NULL) == -1) {
+        perror("Call to sigaction() failed");
+        return;
+    }
+
+    // Create the timer
+    struct sigevent my_sigevent = {
+        .sigev_notify = SIGEV_SIGNAL,
+        .sigev_signo = SIGALRM
+    };
+    if (timer_create(CLOCK_REALTIME, &my_sigevent, &g_timer) == -1) {
+        perror("Call to timer_create() failed");
+        return;
+    }
+
+    // Set to go off every 10 seconds
+    struct itimerspec my_timerspec = {
+        .it_value.tv_sec = 10,
+        .it_value.tv_nsec = 0,
+        .it_interval.tv_sec = 10,
+        .it_interval.tv_nsec = 0
+    };
+    if (timer_settime(g_timer, 0, &my_timerspec, NULL) == -1) {
+        perror("Call to timer_settime() failed");
+        return;
+    }
 }
 
 
@@ -260,6 +330,7 @@ int main(int argc, char *argv[]) {
     struct thread_head head;
     SLIST_INIT(&head);
 
+    timer_init();
 
     // Infinite loop to repeatedly accept and handle clients
     while (!g_exit_flag) {
@@ -271,8 +342,11 @@ int main(int argc, char *argv[]) {
             break;
         }
         
+        current_entry->is_done = false;
+        
         my_client = accept(g_my_socket, (struct sockaddr *)&my_client_addr, &client_addr_len);
         if (my_client == -1) {
+            free(current_entry);
             if (g_exit_flag) {
                 break;
             }
@@ -298,43 +372,39 @@ int main(int argc, char *argv[]) {
 
         syslog(LOG_INFO, "Closed connection from %s", inet_ntoa(my_client_addr.sin_addr));
         printf("Closed connection from %s\n", inet_ntoa(my_client_addr.sin_addr));
-        
-        // TODO: figure out how to properly join any completed threads by traversing the list
-        // Rewatch videos?
-        
-        // Join any completed threads by traversing the list
-        /*
-        struct thread_entry *current, *next;
-        current = SLIST_FIRST(&head);
-        while (current != NULL) {
-            next = SLIST_NEXT(current, next_slist_entry);  
-            pthread_join(current->thread_id, NULL);  
-            SLIST_REMOVE(&head, current, thread_entry, next_slist_entry); 
-            free(current);  
-            current = next;  
+                
+        // Join any completed threads by traversing the list and free any associated memory 
+        struct thread_entry *indexed_entry, *temp;
+        SLIST_FOREACH_SAFE(indexed_entry, &head, next_slist_entry, temp) {
+            if (indexed_entry->is_done) {
+                pthread_join(indexed_entry->thread_id, NULL);
+                SLIST_REMOVE(&head, indexed_entry, thread_entry, next_slist_entry);
+                free(indexed_entry);
+            }
         }
-        */
-        
     }
 
     syslog(LOG_INFO, "Caught signal, exiting");
     printf("Caught signal, exiting\n");
-    
-    // TODO: figure out how to properly join and free remaining threads
-    /*
-    struct thread_entry *current, *next;
-    current = SLIST_FIRST(&head);
-    while (current != NULL) {
-        next = SLIST_NEXT(current, next_slist_entry);  
-        pthread_join(current->thread_id, NULL);  
-        SLIST_REMOVE(&head, current, thread_entry, next_slist_entry); 
-        free(current);  
-        current = next;  
+   
+    // Make sure all threads are joined and all memory is freed
+    struct thread_entry *indexed_entry, *temp;
+    SLIST_FOREACH_SAFE(indexed_entry, &head, next_slist_entry, temp) {
+        if (indexed_entry->thread_id != 0) {
+            pthread_join(indexed_entry->thread_id, NULL);
+        }
+        if (indexed_entry->my_client != -1) {
+            close(indexed_entry->my_client);
+        }
+        SLIST_REMOVE(&head, indexed_entry, thread_entry, next_slist_entry);
+        free(indexed_entry);
     }
-    */
-    
+        
     cleanup();
     
     return 0;
 }
+
+
+        
 
