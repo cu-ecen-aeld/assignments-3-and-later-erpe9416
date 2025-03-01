@@ -17,7 +17,7 @@ default: all
 
 # Linking
 $(TARGET): $(OBJS)
-	$(CC) $(OBJS) -o $(TARGET)
+	$(CC) $(OBJS) $(LDFLAGS) -o $(TARGET)
 	
 # Compiling	
 %.o: %.c
