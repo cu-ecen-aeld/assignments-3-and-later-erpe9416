@@ -4,12 +4,12 @@
 
 # Take cross compiler as optional argument, or default to gcc:
 CROSS_COMPILE ?=
-CC = $(CROSS_COMPILE)gcc
+CC ?= $(CROSS_COMPILE)gcc
 
-TARGET = aesdsocket
+TARGET ?= aesdsocket
 SRCS = aesdsocket.c
 OBJS = aesdsocket.o
-CFLAGS = -Wall -Werror
+CFLAGS ?= -Wall -Werror
 
 all: $(TARGET)
 
@@ -17,7 +17,7 @@ default: all
 
 # Linking
 $(TARGET): $(OBJS)
-	$(CC) $(OBJS) -o $(TARGET)
+	$(CC) $(OBJS) $(LDFLAGS) -o $(TARGET)
 	
 # Compiling	
 %.o: %.c
