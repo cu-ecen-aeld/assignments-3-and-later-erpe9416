@@ -1,6 +1,18 @@
 ## Analysis:
 
-The kernel oops log included below shows a crash from a null pointer dereference as indicated by the line "Unable to handle kernel NULL pointer dereference at virtual address 0000000000000000." Another significant line "pc : faulty_write+0x10/0x20 [faulty]" tells us where the program counter was when the crash occurred, and that is 0x10 bytes into the faulty_write function within our faulty module. Some other useful information can be in the rest of the register dump, the call trace, and the modules linked. Using this information, we can track down the bug in our faulty module to the following code:
+The kernel oops log included below shows a crash from a null pointer dereference as indicated by the line "Unable to handle kernel NULL pointer dereference at virtual address 0000000000000000." Another significant line "pc : faulty_write+0x10/0x20 [faulty]" tells us where the program counter was when the crash occurred, and that is 0x10 bytes into the faulty_write function within our faulty module. Some other useful information can be in the rest of the register dump, the call trace, and the modules linked. Using this information, we can track down the bug in our faulty module to the following code. Below is the relevant objdump and source code:
+
+```sh
+0000000000000000 <faulty_write>:
+   0:	d2800001 	mov	x1, #0x0                   	// #0
+   4:	d2800000 	mov	x0, #0x0                   	// #0
+   8:	d503233f 	paciasp
+   c:	d50323bf 	autiasp
+  10:	b900003f 	str	wzr, [x1]
+  14:	d65f03c0 	ret
+  18:	d503201f 	nop
+  1c:	d503201f 	nop
+```
 
 ```sh
 ssize_t faulty_write (struct file *filp, const char __user *buf, size_t count,
@@ -15,7 +27,7 @@ ssize_t faulty_write (struct file *filp, const char __user *buf, size_t count,
 ## Kernel oops log: 
 
 ```sh
-# echo "hello_world" > /dev/faulty
+echo "hello_world" > /dev/faulty
 Unable to handle kernel NULL pointer dereference at virtual address 0000000000000000
 Mem abort info:
   ESR = 0x0000000096000045
