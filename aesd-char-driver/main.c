@@ -21,6 +21,7 @@
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
+
 MODULE_AUTHOR("Eric Percin"); 
 MODULE_LICENSE("Dual BSD/GPL");
 
@@ -245,7 +246,7 @@ void aesd_cleanup_module(void)
     // Cleanup AESD specific poritions here as necessary
     for (int i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++) {
         if (aesd_device.buff.entry[i].buffptr) {
-            kfree(aesd_device.circ_buff.entry[i].buffptr);
+            kfree(aesd_device.buff.entry[i].buffptr);
         }
     }
     mutex_destroy(&aesd_device.buff_lock);
