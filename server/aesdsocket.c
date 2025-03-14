@@ -22,7 +22,12 @@
 #include <signal.h>
 
 
-#define DATA_FILE_PATH "/var/tmp/aesdsocketdata"
+#ifdef USE_AESD_CHAR_DEVICE
+    #define DATA_FILE_PATH "/dev/aesdchar"
+#else
+    #define DATA_FILE_PATH "/var/tmp/aesdsocketdata"
+#endif
+
 #define INITIAL_BUFFER_SIZE 512
 
 //#define DEBUG
@@ -57,7 +62,9 @@ void cleanup() {
     if (g_my_file_write != -1) {
         close(g_my_file_write);
     }
+#ifndef USE_AESD_CHAR_DEVICE
     remove(DATA_FILE_PATH);
+#endif
     timer_delete(g_timer);
     pthread_mutex_destroy(&g_write_mutex);
     closelog();
@@ -78,6 +85,14 @@ void handle_connection(int my_client, int g_my_file_write) {
     char *packet_buffer = NULL, *bigger_packet_buffer = NULL;
     size_t packet_length = 0;
     int my_file_read = -1;
+
+    if (g_my_file_write == -1) {
+        g_my_file_write = open(DATA_FILE_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666);
+        if (g_my_file_write < 0) {
+            perror("Call to open() failed");
+            return;
+        }
+    }
 
     while (!g_exit_flag) {
         if (packet_buffer == NULL) {
@@ -166,7 +181,7 @@ void *thread_connection_wrapper(void *arg) {
     return NULL;
 }
 
-
+#ifndef USE_AESD_CHAR_DEVICE
 void insert_timestamp(int signum) {
     char timestamp_buffer[128];
     time_t now = time(NULL);
@@ -227,7 +242,7 @@ void timer_init(void)
         return;
     }
 }
-
+#endif
 
 int main(int argc, char *argv[]) {
 
@@ -240,17 +255,28 @@ int main(int argc, char *argv[]) {
         create_daemon = true;
     }
     
+    
+#ifdef USE_AESD_CHAR_DEVICE
+    printf("aesdsocket configured to use /dev/aesdchar\n");
+#else
+    printf("aesdsocket configured to use /var/tmp/aesdsocketdata\n");
+#endif
+    
     printf("Starting TCP server on port 9000...\n");
 
     int rc, my_client;
     struct sockaddr_in my_server_addr, my_client_addr;
 
+/*
     g_my_file_write = open(DATA_FILE_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666);
     if (g_my_file_write < 0) {
         perror("Call to open() failed for writing");
         cleanup();
         return -1;
     }
+*/
+    g_my_file_write = -1;
+
 
     g_my_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (g_my_socket == -1) {
@@ -330,7 +356,10 @@ int main(int argc, char *argv[]) {
     struct thread_head head;
     SLIST_INIT(&head);
 
+#ifndef USE_AESD_CHAR_DEVICE
     timer_init();
+#endif
+
 
     // Infinite loop to repeatedly accept and handle clients
     while (!g_exit_flag) {
