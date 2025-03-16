@@ -29,9 +29,10 @@ struct aesd_dev aesd_device;
 
 int aesd_open(struct inode *inode, struct file *filp)
 {
-    PDEBUG("open");
     
     struct aesd_dev *my_dev;
+
+    PDEBUG("open");
     
     // Handle open: set flip->private_data with our aesd_dev device struct
     // Use inode->i_cdev w/ container_of to locate within aesd_dev
@@ -110,6 +111,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     ssize_t retval = -ENOMEM;
     struct aesd_dev *my_dev;
     char *next_newline = NULL;
+    struct aesd_buffer_entry command_entry;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
     
     // Handle write
@@ -157,6 +159,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         // First, get the position and length of the complete command
         size_t newline_position = next_newline - my_dev->partial_write_buff;
         size_t command_length = newline_position + 1;
+        size_t remaining;
         const char *overwritten_entry;
         
         // Store the command in a new buffer to insert into circular buffer
@@ -168,7 +171,6 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         }
         memcpy(command_buffer, my_dev->partial_write_buff, command_length);
     
-        struct aesd_buffer_entry command_entry;
         command_entry.buffptr = command_buffer;
         command_entry.size = command_length;
         
@@ -178,8 +180,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
             kfree(overwritten_entry);
         }
         
-        // 
-        size_t remaining = my_dev->bytes_stored - command_length;
+        remaining = my_dev->bytes_stored - command_length;
         memmove(my_dev->partial_write_buff, my_dev->partial_write_buff + command_length, remaining);
         my_dev->bytes_stored = remaining;
         
