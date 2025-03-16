@@ -14,6 +14,10 @@ CFLAGS ?= -Wall -Werror
 USE_AESD_CHAR_DEVICE ?= 1
 CFLAGS += -DUSE_AESD_CHAR_DEVICE=$(USE_AESD_CHAR_DEVICE)
 
+$(info USE_AESD_CHAR_DEVICE is $(USE_AESD_CHAR_DEVICE))
+$(info CFLAGS is $(CFLAGS))
+
+
 all: $(TARGET)
 
 default: all
