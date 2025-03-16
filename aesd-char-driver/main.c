@@ -31,9 +31,11 @@ int aesd_open(struct inode *inode, struct file *filp)
 {
     PDEBUG("open");
     
+    struct aesd_dev *my_dev;
+    
     // Handle open: set flip->private_data with our aesd_dev device struct
     // Use inode->i_cdev w/ container_of to locate within aesd_dev
-    struct aesd_dev *my_dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
+    my_dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
     filp->private_data = my_dev;
     
     return 0;
@@ -52,16 +54,21 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
+    struct aesd_dev *my_dev;
+    size_t entry_offset_byte_rtn;
+    struct aesd_buffer_entry *read_entry;
+    size_t copy_bytes, total_bytes;
     PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
 
     // Handle read
-    struct aesd_dev *my_dev = filp->private_data;
-    size_t entry_offset_byte_rtn;
+    
+    my_dev = filp->private_data;
+    
     
     mutex_lock(&my_dev->buff_lock);
     
     // Find which circular buffer entry contains the byte at f_pos
-    struct aesd_buffer_entry *read_entry =  aesd_circular_buffer_find_entry_offset_for_fpos(
+    read_entry =  aesd_circular_buffer_find_entry_offset_for_fpos(
                     &my_dev->buff,
                     (size_t)(*f_pos),
                     &entry_offset_byte_rtn);
@@ -72,9 +79,8 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         return 0;
     }
      
-    // Determine how many bytes should be copied
-    size_t copy_bytes;  
-    size_t total_bytes = read_entry->size - entry_offset_byte_rtn;
+    // Determine how many bytes should be copied 
+    total_bytes = read_entry->size - entry_offset_byte_rtn;
     if (count < total_bytes) {
         copy_bytes = count;
     }
@@ -102,11 +108,13 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
+    struct aesd_dev *my_dev;
+    char *next_newline = NULL;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
     
     // Handle write
     
-    struct aesd_dev *my_dev = filp->private_data;
+    my_dev = filp->private_data;
     
     mutex_lock(&my_dev->buff_lock);
     
@@ -121,7 +129,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         my_dev->bytes_stored = 0;
     }
     else {
-        char *temp_buff = krealloc(my_dev->partial_write_buff, my_dev->bytes_stored + count, GFP_KERNEL);
+        char *temp_buff;
+        temp_buff = krealloc(my_dev->partial_write_buff, my_dev->bytes_stored + count, GFP_KERNEL);
         if (!temp_buff) {
             // Allocation failed!
             mutex_unlock(&my_dev->buff_lock);
@@ -140,7 +149,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     
     // Check for newlines in the partial write buff, which signify complete commands
     
-    char *next_newline = NULL;
+    next_newline = NULL;
     next_newline = memchr(my_dev->partial_write_buff, '\n', my_dev->bytes_stored);
     while (next_newline) {
     
