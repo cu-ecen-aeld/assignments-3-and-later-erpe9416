@@ -136,22 +136,14 @@ void handle_connection(int my_client, int g_my_file_write) {
                         break;
                     }
 
-                    my_file_read = open(DATA_FILE_PATH, O_RDONLY);
-                    if (my_file_read < 0) {
-                        perror("Call to open() failed for reading");
-                        break;
-                    }
                     char reader_buf[INITIAL_BUFFER_SIZE];
                     ssize_t reader_bytes_read;
-                    while ((reader_bytes_read = read(my_file_read, reader_buf, sizeof(reader_buf))) > 0) {
+                    while ((reader_bytes_read = read(g_my_file_write, reader_buf, sizeof(reader_buf))) > 0) {
                         if (send(my_client, reader_buf, reader_bytes_read, 0) < 0) {
                             perror("Call to send() failed");
-                            close(my_file_read);
-                            my_file_read = -1;
                             break;
                         }
                     }
-                    close(my_file_read);
                     if (reader_bytes_read < 0) {
                         perror("Call to read() failed");
                         break;
