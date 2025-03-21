@@ -38,6 +38,7 @@ struct aesd_dev
     struct mutex buff_lock;
 };
 
+loff_t aesd_llseek(struct file *filp, loff_t offset, int whence);
 int aesd_open(struct inode *inode, struct file *filp);
 int aesd_release(struct inode *inode, struct file *filp);
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
