@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <time.h>
 #include <signal.h>
+#include "../aesd-char-driver/aesd_ioctl.h"
+
 
 
 #ifdef USE_AESD_CHAR_DEVICE
@@ -85,9 +87,10 @@ void handle_connection(int my_client, int g_my_file_write) {
     char *packet_buffer = NULL, *bigger_packet_buffer = NULL;
     size_t packet_length = 0;
     int my_file_read = -1;
+    const char *seek_prefix = "AESDCHAR_IOCSEEKTO:";
 
     if (g_my_file_write == -1) {
-        g_my_file_write = open(DATA_FILE_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666);
+        g_my_file_write = open(DATA_FILE_PATH, O_RDWR | O_CREAT, 0666);
         if (g_my_file_write < 0) {
             perror("Call to open() failed");
             return;
@@ -115,42 +118,93 @@ void handle_connection(int my_client, int g_my_file_write) {
         char *newline = memchr(packet_buffer, '\n', packet_length);
         if (newline) {
         
-            pthread_mutex_lock(&g_write_mutex); // Lock before the write
         
-            if (write(g_my_file_write, packet_buffer, packet_length) != (ssize_t)packet_length) {
-                perror("Call to write() failed");
-                pthread_mutex_unlock(&g_write_mutex);
-                break;
-            }
-            
-            pthread_mutex_unlock(&g_write_mutex); // Unlock after the write
+            // Check if the command starts with the ioctl seek prefix, and handle special processing
+            if (strncmp(packet_buffer, seek_prefix, strlen(seek_prefix)) == 0) {
+                unsigned int write_cmd, write_cmd_offset;
+                // Expected format "AESDCHAR_IOCSEEKTO:X,Y\n", X = command index and Y = offset
+                int parse_counter = sscanf(packet_buffer + strlen(seek_prefix), "%u,%u", &write_cmd, &write_cmd_offset);
+                if (parse_counter != 2) {
+                    perror("Issue detected with ioctl parameters");
+                }
+                else {
+                    struct aesd_seekto seekto;
+                    seekto.write_cmd = write_cmd;
+                    seekto.write_cmd_offset = write_cmd_offset;                
+                    if (ioctl(g_my_file_write, AESDCHAR_IOCSEEKTO, &seekto) < 0) {
+                        perror("Call to ioctl() failed");
+                        break;
+                    }
 
-            my_file_read = open(DATA_FILE_PATH, O_RDONLY);
-            if (my_file_read < 0) {
-                perror("Call to open() failed for reading");
-                break;
-            }
-
-            char reader_buf[INITIAL_BUFFER_SIZE];
-            ssize_t reader_bytes_read;
-            while ((reader_bytes_read = read(my_file_read, reader_buf, sizeof(reader_buf))) > 0) {
-                if (send(my_client, reader_buf, reader_bytes_read, 0) < 0) {
-                    perror("Call to send() failed");
+                    my_file_read = open(DATA_FILE_PATH, O_RDONLY);
+                    if (my_file_read < 0) {
+                        perror("Call to open() failed for reading");
+                        break;
+                    }
+                    char reader_buf[INITIAL_BUFFER_SIZE];
+                    ssize_t reader_bytes_read;
+                    while ((reader_bytes_read = read(my_file_read, reader_buf, sizeof(reader_buf))) > 0) {
+                        if (send(my_client, reader_buf, reader_bytes_read, 0) < 0) {
+                            perror("Call to send() failed");
+                            close(my_file_read);
+                            my_file_read = -1;
+                            break;
+                        }
+                    }
                     close(my_file_read);
+                    if (reader_bytes_read < 0) {
+                        perror("Call to read() failed");
+                        break;
+                    }
+                    free(packet_buffer);
+                    packet_buffer = NULL;
+                    packet_length = 0;
                     break;
                 }
             }
             
-            close(my_file_read);
-            if (reader_bytes_read < 0) {
-                perror("Call to read() failed");
+            // Standard write command
+            else {
+                pthread_mutex_lock(&g_write_mutex); // Lock before the write
+            
+                if (write(g_my_file_write, packet_buffer, packet_length) != (ssize_t)packet_length) {
+                    perror("Call to write() failed");
+                    pthread_mutex_unlock(&g_write_mutex);
+                    break;
+                }
+                
+                pthread_mutex_unlock(&g_write_mutex); // Unlock after the write
+
+                my_file_read = open(DATA_FILE_PATH, O_RDONLY);
+                if (my_file_read < 0) {
+                    perror("Call to open() failed for reading");
+                    break;
+                }
+
+                char reader_buf[INITIAL_BUFFER_SIZE];
+                ssize_t reader_bytes_read;
+                while ((reader_bytes_read = read(my_file_read, reader_buf, sizeof(reader_buf))) > 0) {
+                    if (send(my_client, reader_buf, reader_bytes_read, 0) < 0) {
+                        perror("Call to send() failed");
+                        close(my_file_read);
+                        my_file_read = -1;
+                        break;
+                    }
+                }
+                
+                close(my_file_read);
+                if (reader_bytes_read < 0) {
+                    perror("Call to read() failed");
+                    break;
+                }
+
+                free(packet_buffer);
+                packet_buffer = NULL;
+                packet_length = 0;
                 break;
             }
-
-            free(packet_buffer);
-            packet_buffer = NULL;
-            packet_length = 0;
-            break;
+        
+        // No newline--extend the buffer to continue
         } else {
             bigger_packet_buffer = realloc(packet_buffer, packet_length * 2);
             if (!bigger_packet_buffer) {
